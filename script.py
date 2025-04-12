@@ -348,28 +348,77 @@ If the thread appears to be a delivery failure, automated message, or spam, retu
     for email, person_data in response_json.items():
         db_person_instance = people_collection.find_one({"email":email})
         threads_analized = 0
+        messages_to = person_data.get("messages_to_person", 0)
+        messages_from= person_data.get("messages_from_person", 0) 
+        new_summary = person_data.get("summary")
+        new_primary_relationship = person_data.get("primary_relationship","")
+        remove_old_relationship = False
+        new_tags = person_data.get("tags",[])
+
         if db_person_instance:
+            messages_from += db_person_instance.get("messages_from_person",0)
+            messages_to += db_person_instance.get("messages_to_person",0)
             threads_analized = db_person_instance.get("threads_analized",0)
             old_sentiment_average = db_person_instance.get("sentiment_average", 0)
             new_sentiment_average = (old_sentiment_average * threads_analized+ person_data["sentiment"] )  /(threads_analized+1)
+            old_summary = db_person_instance.get("summary","") 
+            old_primary_relationship = db_person_instance.get("primary_relationship","")
+            prompt_for_relationship_concat = \
+            f'''
+You are an AI trained in social and professional relationship intelligence.
+You are given two relationship labels that describe how a person relates to the account owner. Choose the one that best reflects the primary relationship between them, based on clarity, role importance, and communication context.
+### Relationships:
+- Previous relationship: "{old_primary_relationship}"
+- New relationship: "{new_primary_relationship}"
+Choose the most appropriate one to use as the primary label going forward.
+### Output format:
+Return only the better relationship label as a **lowercase string** (e.g., "recruiter", "manager"). Do not include any explanation, markdown, or formatting.
+            '''
+            concat_relationship_response =  genai_client.models.generate_content(
+            model='gemini-2.0-flash-lite',
+            contents=prompt_for_relationship_concat
+            )
+            new_primary_relationship = concat_relationship_response.text.strip()
+            if new_primary_relationship != old_primary_relationship:
+                remove_old_relationship = True                
+
+            prompt_for_summary_concat = \
+            f'''
+You are an AI assistant that refines and expands relationship summaries based on new information.
+
+Here is the existing summary:
+"{old_summary}"
+Here is the new summary to integrate:
+"{new_summary}"
+Your task is to intelligently combine both summaries into a single, updated version. 
+Keep it concise (2–3 sentences), clear, and non-redundant. 
+Preserve important details from both inputs and ensure a consistent tone and style.
+Output only the updated summary without any extra formatting or commentary. 
+            '''
+            concat_summary_response = genai_client.models.generate_content(
+            model='gemini-2.0-flash-lite',
+            contents=prompt_for_summary_concat
+            )
+            new_summary = concat_summary_response.text.strip()
+            new_tags = list(set(new_tags + db_person_instance.get("tags",[])))
         else:
-            new_sentiment_average = person_data["sentiment"]
+            new_sentiment_average = person_data.get("sentiment",0)
 
         threads_analized += 1 
         insert_instance = {
             "email": email,
             "name": person_data.get("name"),
-            "primary_relationship": person_data.get("primary_relationship"),
-            "tags": person_data.get("tags", []),
-            "summary": person_data.get("summary"),
+            "primary_relationship": new_primary_relationship,
+            "tags": new_tags,
+            "summary": new_summary,
             "sentiment_average": new_sentiment_average,  
-            "messages_to_person": person_data.get("messages_to_person", 0),
-            "messages_from_person": person_data.get("messages_from_person", 0),
+            "messages_to_person": messages_to,
+            "messages_from_person": messages_from,
             "threads_analized": threads_analized 
         }
         
         people_collection.update_one(
-           {"email": email},
+            {"email": email},
             {"$set":insert_instance},
             upsert=True 
         )
@@ -381,6 +430,8 @@ If the thread appears to be a delivery failure, automated message, or spam, retu
             db_relationship_instance = tags_collection.find_one({"type": "primary_relationship"})
             current_relationships = set(db_relationship_instance.get("tags", [])) if db_relationship_instance else set()
             updated_relationships = sorted(current_relationships | {primary_rel})
+            if remove_old_relationship:
+                updated_relationships.discard(old_primary_relationship)
 
             tags_collection.update_one(
                 {"type": "primary_relationship"},
@@ -389,11 +440,11 @@ If the thread appears to be a delivery failure, automated message, or spam, retu
             )
 
         ###  Update secondary_tags list
-        new_tags = person_data.get("tags", [])
-        if new_tags:
+        new_tags_list = person_data.get("tags", [])
+        if new_tags_list:
             db_tags_instance = tags_collection.find_one({"type": "secondary_tag"})
             current_tags = set(db_tags_instance.get("tags", [])) if db_tags_instance else set()
-            updated_tags = sorted(current_tags | set(new_tags))
+            updated_tags = sorted(current_tags | set(new_tags_list))
 
             tags_collection.update_one(
                 {"type": "secondary_tag"},
