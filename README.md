@@ -34,7 +34,7 @@ Ensure these APIs are enabled in your [Google Cloud Console](https://console.clo
 1. **Gmail API**  
    For accessing and analyzing email threads
 
-2. **People API** *(optional but recommended)*  
+2. **People API**   
    To resolve contact names and enrich email data
 
 3. **Generative Language API** (Gemini / PaLM API)  
