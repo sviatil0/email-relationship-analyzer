@@ -305,28 +305,31 @@ def get_genai_client(api_key):
     return genai_client
 def process_thread_with_genai_and_store(genai_client, thread_dic:dict, owner:dict, db): 
     prompt =  \
-    f'''
+   f'''
 You are an expert relationship and communication intelligence assistant.
-I will provide you:
-    An email thread (as a single string) ({thread_dic['thread']})
-    A list of participants (with name and email) ({thread_dic['participants']}) 
-    The name and email of the account owner ({owner['email']} : {owner['name']})
-Your task is to analyze the conversation and return a JSON object. The keys should be the email addresses of participants mentioned in the thread (excluding the owner).
-For each person, return:
-    "name": Their full name
-    "primary_relationship": A brief label describing how they relate to the owner (e.g., "colleague", "manager", "client", etc.)
-    "tags": 2–4 tags summarizing the relationship and topic context
-    "summary": A short (1–2 sentence) summary of the key interaction between this person and the owner
-    "sentiment": A sentiment score (float) between -1.0 (very negative) and 1.0 (very positive)
-    "messages_to_person": Number of messages written by the owner directly to this person
-    "messages_from_person": Number of replies this person wrote back to the owner
-Return the result as a valid **Python dictionary**, without markdown, formatting, or code block wrappers. 
-Only output the raw JSON object, nothing else. 
-The entire response must be a raw JSON string that can be parsed by json.loads() in Python.
-Use double quotes for all keys and string values.
-If the thread appears to be a delivery failure, automated message, or spam, return the string "AVOID" instead of a JSON object.
-    ''' 
-    
+Your task:
+Analyze the provided email thread and generate a structured JSON output.
+Input:
+- Email thread (as a single string): {thread_dic['thread']}
+- List of participants (name and email): {thread_dic['participants']}
+- Account owner's name and email: {owner['name']} ({owner['email']})
+Output format:
+- Output **only** a raw JSON object.
+- Do **not** use any markdown, code block markers (e.g., ```json), or extra text.
+- Ensure the JSON can be parsed by `json.loads()` in Python without modification.
+- Use **double quotes** for all keys and string values.
+- If the thread appears to be a delivery failure, an automated message, or spam, **output the string "AVOID"** (no JSON object, just the raw string).
+For each participant (excluding the owner), the JSON keys must be their email addresses.
+Each participant should have an object with the following fields:
+- "name": Their full name
+- "primary_relationship": Brief label (e.g., "colleague", "manager", "client", etc.)
+- "tags": 2–4 keywords summarizing relationship and context
+- "summary": 1–2 sentence summary of the interaction between them and the owner
+- "sentiment": A float sentiment score from -1.0 (very negative) to 1.0 (very positive)
+- "messages_to_person": Number of messages the owner sent to this person
+- "messages_from_person": Number of messages this person sent to the owner
+Only output the JSON object or the string "AVOID". No extra commentary.
+''' 
     response = genai_client.models.generate_content(
         model='gemini-2.0-flash-lite',
         contents=prompt
@@ -335,13 +338,14 @@ If the thread appears to be a delivery failure, automated message, or spam, retu
     if raw_output.upper().strip() == "AVOID":
         print("Gemini flagged this thread as irrelevant — skipping.")
         return 
-    cleaned = re.sub(r"^```json|^```|```$", "", raw_output.strip(), flags=re.IGNORECASE | re.MULTILINE).strip()
-
+    cleaned = re.sub(r"^```json|^```|```|^```python", "", raw_output.strip(), flags=re.IGNORECASE | re.MULTILINE).strip()
+    cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
     try:
         response_json = json.loads(cleaned)
     except (TypeError, json.JSONDecodeError) as err:
         print(f'{err}: Couldn\'t process genai output')
-        print("Raw LLM output:",response.text)
+        print("Raw LLM output:\n",response.text)
+        print("Cleaned LLM output:\n",cleaned)
         return 
     people_collection = db["people"]
     tags_collection = db["tags"]
