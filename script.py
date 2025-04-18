@@ -304,6 +304,9 @@ def get_genai_client(api_key):
         )
     return genai_client
 def process_thread_with_genai_and_store(genai_client, thread_dic:dict, owner:dict, db): 
+    # Can't accurately determine sentiment if so many people are involved in the thread
+    if len(thread_dic['participants']) > 10:
+        return
     prompt =  \
    f'''
 You are an expert relationship and communication intelligence assistant.
